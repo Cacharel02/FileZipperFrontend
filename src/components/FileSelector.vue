@@ -28,7 +28,7 @@ const clearAll = () => {
 }
 
 
-const zipEndpoint = (import.meta.env.VITE_ZIP_ENDPOINT as string) || 'http://localhost:8080/filezippertool/zip'
+const zipEndpoint = 'http://localhost:8080/filezippertool/zip'
 
 const isLoading = ref(false)
 
@@ -53,13 +53,56 @@ const zipFiles = async () => {
     if (!res.ok) {
       const text = await res.text()
       console.error('Zip upload failed:', res.status, text)
-      // Basic user feedback — developer can replace with nicer UI
       alert('L\'envoi a échoué : ' + res.status)
     } else {
-      // Success — developer may want to clear files or handle response
-      const data = await res.json().catch(() => null)
-      console.log('Zip upload successful', data)
-      alert('Fichiers envoyés avec succès')
+      // Response is expected to be a binary file (bytes) — download it
+      try {
+        const disposition = (res.headers.get('content-disposition') || '')
+        const blob = await res.blob()
+
+        // Try to extract filename according to RFC5987 (filename*=UTF-8''...) first,
+        // then fallback to filename="..." or filename=...
+        let filename = ''
+
+        const rfc5987 = /filename\*=(?:UTF-8'')?([^;\n\r]+)/i.exec(disposition)
+        const fallback = /filename=(?:"?)([^";]+)(?:"?)/i.exec(disposition)
+
+        const match = rfc5987 || fallback
+        if (match && match[1]) {
+          let raw = match[1].trim()
+          // strip surrounding quotes if any
+          raw = raw.replace(/^"|"$/g, '')
+          try {
+            // decodeURIComponent for percent-encoded UTF-8 (RFC5987)
+            filename = decodeURIComponent(raw)
+          } catch (e) {
+            // if decode fails, use raw value
+            filename = raw
+          }
+        }
+
+        // Fallback filename if header absent or parsing failed
+        if (!filename) {
+          if (blob.type === 'application/zip') filename = 'archive.zip'
+          else if (blob.type) filename = `files.${blob.type.split('/')[1] || 'bin'}`
+          else filename = 'archive.bin'
+        }
+
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = filename
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        // revoke after a short delay to ensure download started
+        setTimeout(() => URL.revokeObjectURL(url), 1000)
+
+        console.log('Zip download started', filename)
+      } catch (err) {
+        console.error('Error handling binary response:', err)
+        alert('Erreur lors du traitement de la réponse')
+      }
     }
   } catch (err) {
     console.error('Zip upload error:', err)
