@@ -3,6 +3,11 @@ import { ref } from 'vue'
 
 const files = ref<File[]>([])
 
+// Success state after zip operation
+const isSuccess = ref(false)
+const resultUrl = ref<string | null>(null)
+const resultFilename = ref('')
+
 const handleFileSelect = (event: Event) => {
   const target = event.target as HTMLInputElement
   if (target.files) {
@@ -32,6 +37,33 @@ const zipEndpoint = 'http://localhost:8080/filezippertool/zip'
 
 const isLoading = ref(false)
 
+const downloadResult = () => {
+  if (!resultUrl.value) return
+  const a = document.createElement('a')
+  a.href = resultUrl.value
+  a.download = resultFilename.value || 'archive.zip'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  // revoke after a short delay to ensure download starts
+  setTimeout(() => {
+    if (resultUrl.value) {
+      URL.revokeObjectURL(resultUrl.value)
+      resultUrl.value = null
+    }
+  }, 1000)
+}
+
+const returnToFiles = () => {
+  if (resultUrl.value) {
+    URL.revokeObjectURL(resultUrl.value)
+    resultUrl.value = null
+  }
+  resultFilename.value = ''
+  isSuccess.value = false
+  // keep `files` selection as requested
+}
+
 const zipFiles = async () => {
   if (!zipEndpoint) {
     console.warn('No zipEndpoint configured for FileSelector.')
@@ -55,7 +87,7 @@ const zipFiles = async () => {
       console.error('Zip upload failed:', res.status, text)
       alert('L\'envoi a échoué : ' + res.status)
     } else {
-      // Response is expected to be a binary file (bytes) — download it
+      // Response is expected to be a binary file (bytes) — prepare it for user download
       try {
         const disposition = (res.headers.get('content-disposition') || '')
         const blob = await res.blob()
@@ -88,17 +120,13 @@ const zipFiles = async () => {
           else filename = 'archive.bin'
         }
 
+        // Instead of forcing immediate download, expose an object URL and show success UI
         const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = filename
-        document.body.appendChild(a)
-        a.click()
-        a.remove()
-        // revoke after a short delay to ensure download started
-        setTimeout(() => URL.revokeObjectURL(url), 1000)
+        resultUrl.value = url
+        resultFilename.value = filename
+        isSuccess.value = true
 
-        console.log('Zip download started', filename)
+        console.log('Zip ready for download', filename)
       } catch (err) {
         console.error('Error handling binary response:', err)
         alert('Erreur lors du traitement de la réponse')
@@ -128,7 +156,15 @@ const zipFiles = async () => {
       />
     </div>
 
-    <div v-if="files.length > 0" class="files-list">
+    <div v-if="isSuccess" class="zip-success">
+      <h3>Archive prête : {{ resultFilename }}</h3>
+      <div class="actions">
+        <button @click="downloadResult" class="zip-btn">Télécharger le zip</button>
+        <button @click="returnToFiles" class="clear-btn">Retourner aux fichiers</button>
+      </div>
+    </div>
+
+    <div v-else-if="files.length > 0" class="files-list">
       <h3>Fichiers sélectionnés ({{ files.length }})</h3>
       <ul>
         <li v-for="(file, index) in files" :key="index" class="file-item">
